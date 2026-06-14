@@ -1,0 +1,14 @@
+{
+  "name": "lumar-medical-appointment-confirmations",
+  "version": "1.0.0",
+  "description": "Aplicación para confirmación automática de turnos médicos por mensajería.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}
