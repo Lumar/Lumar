@@ -40,13 +40,16 @@ def checkpass(password, saved):
         return hmac.compare_digest(hashpass(password,base64.b64decode(salt)),saved)
     except Exception: return False
 
-def setpassword():
-    import getpass
-    p1=getpass.getpass('Nueva clave de administrador (minimo 10 caracteres): ')
-    p2=getpass.getpass('Repetir clave: ')
-    if len(p1)<10 or p1!=p2: raise SystemExit('Las claves no coinciden o son muy cortas.')
+def setpassword_cli(explicit_pass=None):
+    if explicit_pass:
+        p1 = explicit_pass
+    else:
+        import getpass
+        p1=getpass.getpass('Nueva clave de administrador (minimo 10 caracteres): ')
+        p2=getpass.getpass('Repetir clave: ')
+        if len(p1)<10 or p1!=p2: raise SystemExit('Las claves no coinciden o son muy cortas.')
     CONFIG.write_text(json.dumps({'password_hash':hashpass(p1)},indent=2),encoding='utf8')
-    print('Clave guardada. Ya podes iniciar el servidor.')
+    print('Clave guardada correctamente.')
 
 class Handler(BaseHTTPRequestHandler):
     server_version='ClubAsistencia/1.0'
@@ -118,10 +121,12 @@ class Handler(BaseHTTPRequestHandler):
             counts['total']=len(rows);counts['presentes']=sum(r['presente'] for r in rows)
             return self.respond(200,{'reunion':dict(meeting),'invitaciones':rows,'totales':counts})
         return self.error(404,'No encontrado')
+        
     def do_POST(self):
         try:self.post()
         except (ValueError,sqlite3.IntegrityError) as e:self.error(400,str(e))
         except Exception as e:print('ERROR POST',repr(e));self.error(500,'Error interno')
+        
     def post(self):
         p=urlparse(self.path).path; data=self.body()
         if p=='/api/login':
@@ -130,55 +135,38 @@ class Handler(BaseHTTPRequestHandler):
                 time.sleep(.35);return self.error(401,'Contraseña incorrecta')
             sid=secrets.token_urlsafe(32);csrf=secrets.token_urlsafe(32)
             with LOCK:SESSIONS[sid]={'expires':time.time()+3600*12,'csrf':csrf}
-            secure='; Secure' if self.headers.get('X-Forwarded-Proto','').lower()=='https' else ''
+            
+            # Soporte correcto para detectar HTTPS detrás del proxy de Render
+            proto = self.headers.get('X-Forwarded-Proto', '').lower()
+            secure='; Secure' if proto == 'https' or self.headers.get('X-Forwarded-Port') == '443' else ''
             return self.respond(200,{'ok':True,'csrf':csrf},cookie=f'sid={sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200{secure}')
+            
         if p.startswith('/api/responder/'):
             token=p.rsplit('/',1)[-1];ans=str(data.get('respuesta',''))
-            if ans not in ('si','no','quizas'):return self.error(400,'Respuesta no válida')
+            if ans not in ('si','no','quizas'):
+                return self.error(400, 'Respuesta inválida')
             with dbconn() as c:
-                cur=c.execute('UPDATE invitaciones SET respuesta=?,respondido=? WHERE token=?',(ans,now(),token))
-            if not cur.rowcount:return self.error(404,'Invitación no encontrada')
-            return self.respond(200,{'ok':True})
-        if not self.authorized(write=True):return
-        if p=='/api/logout':
-            cookie=self.headers.get('Cookie','');sid=next((x.strip()[4:] for x in cookie.split(';') if x.strip().startswith('sid=')),None)
-            with LOCK:SESSIONS.pop(sid,None)
-            return self.respond(200,{'ok':True},cookie='sid=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict')
-        if p=='/api/socios':
-            nombre=str(data.get('nombre','')).strip()[:120];tel=str(data.get('telefono','')).strip()[:60]
-            if not nombre:return self.error(400,'Ingresá un nombre')
+                cur = c.execute('UPDATE invitaciones SET respuesta=?, respondido=? WHERE token=?', (ans, now(), token))
+                if cur.rowcount == 0:
+                    return self.error(404, 'Invitación no encontrada')
+            return self.respond(200, {'ok': True})
+            
+        # Rutas de administración protegidas que requieren autorización de escritura (CSRF)
+        if p.startswith('/api/') and not self.authorized(write=True):
+            return
+            
+        if p=='/api/socios/crear':
+            nombre=str(data.get('nombre','')).strip()
+            telefono=str(data.get('telefono','')).strip()
+            if not nombre: return self.error(400, 'El nombre es obligatorio')
             with dbconn() as c:
-                cur=c.execute('INSERT INTO socios(nombre,telefono,creado) VALUES(?,?,?)',(nombre,tel,now()))
-            return self.respond(200,{'id':cur.lastrowid})
-        if p=='/api/reuniones':
-            titulo=str(data.get('titulo','')).strip()[:150];fecha=str(data.get('fecha','')).strip()[:40]
-            if not titulo or not fecha:return self.error(400,'Título y fecha son obligatorios')
-            dt.datetime.fromisoformat(fecha)
+                c.execute('INSERT INTO socios(nombre, telefono, creado) VALUES(?,?,?)', (nombre, telefono, now()))
+            return self.respond(200, {'ok': True})
+            
+        if p=='/api/reuniones/crear':
+            titulo=str(data.get('titulo','')).strip()
+            fecha=str(data.get('fecha','')).strip()
+            lugar=str(data.get('lugar','')).strip()
+            desc=str(data.get('descripcion','')).strip()
+            if not titulo or not fecha: return self.error(400, 'Título y fecha son obligatorios')
             with dbconn() as c:
-                cur=c.execute('INSERT INTO reuniones(titulo,fecha,lugar,descripcion,creado) VALUES(?,?,?,?,?)',(titulo,fecha,str(data.get('lugar',''))[:180],str(data.get('descripcion',''))[:1000],now()))
-            return self.respond(200,{'id':cur.lastrowid})
-        if p=='/api/invitar':
-            mid=int(data.get('reunion_id',0))
-            with dbconn() as c:
-                if not c.execute('SELECT 1 FROM reuniones WHERE id=?',(mid,)).fetchone():return self.error(404,'Reunión no encontrada')
-                ids=data.get('socios')
-                if ids is None:ids=[x[0] for x in c.execute('SELECT id FROM socios')]
-                for sid in ids:
-                    c.execute('INSERT OR IGNORE INTO invitaciones(reunion_id,socio_id,token) VALUES(?,?,?)',(mid,int(sid),secrets.token_urlsafe(24)))
-            return self.respond(200,{'ok':True})
-        if p=='/api/presencia':
-            iid=int(data.get('id',0)); val=1 if data.get('presente') else 0
-            with dbconn() as c:cur=c.execute('UPDATE invitaciones SET presente=?,registrado=? WHERE id=?',(val,now() if val else None,iid))
-            if not cur.rowcount:return self.error(404,'Registro no encontrado')
-            return self.respond(200,{'ok':True})
-        return self.error(404,'No encontrado')
-
-if __name__=='__main__':
-    ap=argparse.ArgumentParser();ap.add_argument('--set-password',action='store_true');ap.add_argument('--port',type=int,default=8787);ap.add_argument('--host',default='0.0.0.0');args=ap.parse_args()
-    if args.set_password:setpassword();raise SystemExit(0)
-    if not CONFIG.exists():raise SystemExit('Primero ejecuta: python server.py --set-password')
-    initdb()
-    server=ThreadingHTTPServer((args.host,args.port),Handler)
-    print(f'Club Asistencia funcionando en http://localhost:{args.port}/')
-    print('Para detenerlo: Ctrl+C')
-    server.serve_forever()
