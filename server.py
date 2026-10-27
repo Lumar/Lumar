@@ -106,11 +106,22 @@ class Handler(BaseHTTPRequestHandler):
         if p=='/api/reuniones':
             with dbconn() as c: rows=c.execute('SELECT * FROM reuniones ORDER BY fecha DESC,id DESC').fetchall()
             return self.respond(200,[dict(x) for x in rows])
-        if p=='/api/reporte':
-            mid=int((q.get('id') or ['0'])[0])
+                if p=='/api/reporte':
+            mid = int((q.get('id') or ['0'])[0])
             with dbconn() as c:
                 meeting=c.execute('SELECT * FROM reuniones WHERE id=?',(mid,)).fetchone()
                 if not meeting:return self.error(404,'Reunión no encontrada')
+                rows=[dict(x) for x in c.execute('''SELECT i.id,s.nombre,s.telefono,i.token,i.respuesta,i.respondido,i.presente,i.registrado FROM invitaciones i JOIN socios s ON s.id=i.socio_id WHERE i.reunion_id=? ORDER BY s.nombre''',(mid,))]
+            if 'csv' in q:
+                out=io.StringIO();w=csv.writer(out,delimiter=';');w.writerow(['Socio','Teléfono','Respuesta','Fecha respuesta','Presente','Fecha check-in'])
+                for r in rows:w.writerow([r['nombre'],r['telefono'],r['respuesta'],r['respondido'] or '', 'Sí' if r['presente'] else 'No',r['registrado'] or ''])
+                raw=('\ufeff'+out.getvalue()).encode('utf-8')
+                return self.respond(200,raw,'text/csv; charset=utf-8')
+            counts={x:sum(1 for r in rows if r['respuesta']==x) for x in ('si','no','quizas','pendiente')}
+            counts['total']=len(rows);counts['presentes']=sum(r['presente'] for r in rows)
+            return self.respond(200,{'reunion':dict(meeting),'invitaciones':rows,'totales':counts})
+        return self.error(404,'No encontrado')
+
                 rows=[dict(x) for x in c.execute('''SELECT i.id,s.nombre,s.telefono,i.token,i.respuesta,i.respondido,i.presente,i.registrado FROM invitaciones i JOIN socios s ON s.id=i.socio_id WHERE i.reunion_id=? ORDER BY s.nombre''',(mid,))]
             if 'csv' in q:
                 out=io.StringIO();w=csv.writer(out,delimiter=';');w.writerow(['Socio','Teléfono','Respuesta','Fecha respuesta','Presente','Fecha check-in'])
