@@ -1,0 +1,34 @@
+CLUB ASISTENCIA - VERSION LIVIANA (Python + SQLite)
+
+REQUISITO: Python 3.9 o superior. No se instala PostgreSQL ni paquetes pip.
+
+1) Descomprimir esta carpeta en tu PC (por ejemplo C:\ClubAsistencia).
+2) Ejecutar CONFIGURAR_CLAVE.bat para definir la clave del panel.
+3) Ejecutar INICIAR_WINDOWS.bat. Mantener esa ventana abierta.
+4) Abrir http://localhost:8787/ en la misma computadora.
+5) Cargar socios, crear reunion y pulsar Generar invitaciones.
+6) Copiar link individual de cada socio y compartir.
+
+DATOS: se guardan en el archivo club.db junto al programa.
+Hacer copia de seguridad con el servidor DETENIDO de club.db y config.json.
+Para restaurar, copiar los dos archivos a la carpeta del sistema.
+
+PARA CELULARES:
+- Si estan conectados al MISMO Wi-Fi/LAN, averiguar IP de la PC con ipconfig.
+  Usar http://IP_DE_TU_PC:8787/ y permitir el puerto 8787 en Firewall Windows.
+- Desde otra red o datos moviles, NO funcionara un enlace localhost ni la IP privada.
+  Es necesario publicar de forma segura con HTTPS (por ej. Cloudflare Tunnel o
+  Tailscale Funnel y control de acceso al panel). Evitar abrir un puerto directo
+  del router hacia internet. No compartir la clave de administrador.
+- Si cambia el dominio externo o IP, generar y enviar los enlaces con ese
+  dominio desde el navegador del administrador que utilice la direccion publica.
+- La computadora debe permanecer ENCENDIDA y el servidor en ejecucion.
+
+CALCULOS: SI/NO/TAL VEZ/PENDIENTE son las respuestas. PRESENTE es check-in
+real del dia del encuentro. Porcentaje de presencia = presentes / invitados x 100.
+Cada socio recibe un token aleatorio individual; quien tenga el link puede
+cambiar su respuesta, por eso no hay que compartir enlaces públicamente.
+
+SEGURIDAD/ESCALA: servidor simple para club pequeno. Antes de exponer a internet,
+configurar HTTPS, copias y acceso controlado, y considerar reverse proxy y
+limitacion de solicitudes en el tunel. Mantener Python actualizado.
