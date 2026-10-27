@@ -1,8 +1,7 @@
 import argparse, base64, csv, datetime as dt, hashlib, hmac, io, json, os, secrets, sqlite3, threading, time
-from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs, quote
+from urllib.parse import urlparse, parse_qs
 
 ROOT = Path(__file__).resolve().parent
 DB = ROOT / 'club.db'
@@ -235,7 +234,6 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 SESSIONS[sid] = {'expires': time.time() + 3600 * 12, 'csrf': csrf}
 
-            # Soporte correcto para detectar HTTPS detrás del proxy de Render
             proto = self.headers.get('X-Forwarded-Proto', '').lower()
             secure = '; Secure' if proto == 'https' or self.headers.get('X-Forwarded-Port') == '443' else ''
             return self.respond(200, {'ok': True, 'csrf': csrf},
@@ -255,7 +253,6 @@ class Handler(BaseHTTPRequestHandler):
                     return self.error(404, 'Invitación no encontrada')
             return self.respond(200, {'ok': True})
 
-        # Rutas de administración protegidas (requieren CSRF)
         if p.startswith('/api/') and not self.authorized(write=True):
             return
 
@@ -297,7 +294,7 @@ class Handler(BaseHTTPRequestHandler):
                             (reunion_id, int(sid), token)
                         )
                     except sqlite3.IntegrityError:
-                        pass  # ya existe la invitación
+                        pass
             return self.respond(200, {'ok': True})
 
         if p == '/api/asistencia':
@@ -328,27 +325,33 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     parser = argparse.ArgumentParser(description='Club Asistencia')
-    parser.add_argument('--set-password', metavar='PASS', nargs='?', const=True,
-                        help='Configura la contraseña de administrador')
+    parser.add_argument('--set-password', metavar='PASS', nargs='?', const=True)
     parser.add_argument('--host', default='0.0.0.0')
-    parser.add_argument('--port', type=int, default=8080)
+    parser.add_argument('--port', type=int, default=int(os.environ.get('PORT', 8080)))
     args = parser.parse_args()
 
     if args.set_password is not None:
         setpassword_cli(None if args.set_password is True else args.set_password)
         return
 
+    # Crear config.json automáticamente desde variable de entorno
     if not CONFIG.exists():
-        print('Primero configurá la contraseña con: python app.py --set-password')
-        return
+        password = os.environ.get('ADMIN_PASSWORD')
+        if not password:
+            print('ERROR: Falta la variable de entorno ADMIN_PASSWORD')
+            return
+        if len(password) < 10:
+            print('ERROR: ADMIN_PASSWORD debe tener al menos 10 caracteres')
+            return
+        CONFIG.write_text(json.dumps({'password_hash': hashpass(password)}, indent=2), encoding='utf8')
+        print('Contraseña configurada desde ADMIN_PASSWORD')
 
     initdb()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f'Servidor escuchando en http://{args.host}:{args.port}')
+    print(f'Servidor escuchando en puerto {args.port}')
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print('\nCerrando...')
         server.shutdown()
 
 if __name__ == '__main__':
