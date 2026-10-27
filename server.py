@@ -266,6 +266,29 @@ class Handler(BaseHTTPRequestHandler):
                           (nombre, telefono, now()))
             return self.respond(200, {'ok': True})
 
+        if p == '/api/socios/importar':
+            socios = data.get('socios') or []
+            if not isinstance(socios, list) or not socios:
+                return self.error(400, 'Debes enviar una lista de socios')
+
+            insertados = 0
+            with dbconn() as c:
+                for s in socios:
+                    nombre = str(s.get('nombre', '')).strip()
+                    telefono = str(s.get('telefono', '')).strip()
+                    if not nombre:
+                        continue
+                    # Evitar duplicados por nombre
+                    existe = c.execute('SELECT id FROM socios WHERE nombre = ?', (nombre,)).fetchone()
+                    if existe:
+                        continue
+                    c.execute(
+                        'INSERT INTO socios(nombre, telefono, creado) VALUES(?,?,?)',
+                        (nombre, telefono, now())
+                    )
+                    insertados += 1
+            return self.respond(200, {'ok': True, 'insertados': insertados})
+
         if p == '/api/reuniones/crear':
             titulo = str(data.get('titulo', '')).strip()
             fecha = str(data.get('fecha', '')).strip()
